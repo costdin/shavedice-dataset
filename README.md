@@ -1,10 +1,14 @@
 # Snowflake Cyclic VM Demand Dataset
 
 This repository contains documentation for the dataset that accompanies our
-ICPE 2025 paper, "Shaved Ice: Optimal Compute Resource Commitments for
+[ICPE 2025](https://icpe2025.spec.org/) paper, "Shaved Ice: Optimal Compute Resource Commitments for
 Dynamic Multi-Cloud Workloads".  It also includes example [R](http://www.r-project.org) and Python notebooks to
 read and visualize the data, including scripts to reproduce the
 figures and analysis results in the paper.
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15015992.svg)](https://doi.org/10.5281/zenodo.15015992)
+
+This project is archived on [Zenodo](https://zenodo.org/), an open-access repository, to ensure long-term reproducibility of the research.
 
 ## Dataset
 
@@ -56,7 +60,10 @@ There are no identifiers in the dataset that could potentially reveal
 a customer's identity.  Public access to the information in this dataset
 does not lead to any privacy or other ethical concerns.
 
-Because only a subset of Snowflake deployments are included and the numbers are normalized, neither the absolute nor relative growth rates or size of Snowflake deployments can be inferred from this dataset.
+This data represents a subset of Snowflake VM demand from select regions.
+Therefore, neither the overall growth rates nor the total demand of Snowflake
+VMs can be inferred.
+
 ## Contact
 
 Murray Stokely (murray.stokely@snowflake.com)
@@ -70,11 +77,13 @@ Kindly cite the following publication if you are using our dataset:
 
 ```
 @inproceedings {snowflake-icpe25,
-  author = {Murray Stokely and Orestis Kostakis and Neel Nadgir},
+  author = {Murray Stokely and Neel Nadgir and Jack Peele and Orestis Kostakis},
   title = {Shaved Ice: Optimal Compute Resource Commitments for Dynamic Multi-Cloud Workloads},
-  booktitle = {Proceedings of the ACM/SPEC International Conference on Performance Engineering},
+  booktitle = {Proceedings of the 16th ACM/SPEC International Conference on Performance Engineering (ICPE '25)},
   year = {2025},
   publisher = {Association for Computing Machinery},
   address = {New York, NY, USA},
+  url = {https://doi.org/10.1145/3676151.3719353},
+  doi = {10.1145/3676151.3719353}
 }
 ```
