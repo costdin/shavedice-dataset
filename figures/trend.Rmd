@@ -466,3 +466,157 @@ dev.off()
 
 
 
+# Laddering
+
+We consider the 4 weeks between 12/3 and 12/31/2023 to consider the impact of laddering.
+
+```{r}
+PlotBoxes.2 <- function(df, sp.level=NULL, title=FALSE, ylim=NULL, weeks=1) {
+  daysdelta = round(as.numeric(max(df$xmax) - min(df$xmin)))
+  p <- ggplot(df) +
+           geom_rect_pattern(aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax,
+                                 fill=Pricing, pattern=Pricing),
+                             colour=NA, pattern_size=0.25,
+                             pattern_spacing=0.02) +
+           theme_bw() +
+           theme(axis.text=element_text(size=15),
+                 axis.title=element_text(size=15),
+                 legend.text = element_text(size=15),
+                 legend.title = element_blank(),
+                 legend.position="bottom",
+                 strip.text=element_text(size=15)) +
+           ylab("Cost") + xlab("") +
+           scale_pattern_manual(values=c("none", "none", "stripe")) +
+           scale_x_continuous(breaks=seq(from=as.POSIXct(min(df$xmin), tz="UTC"),
+                                         to=as.POSIXct(max(df$xmax), tz="UTC"),
+                                         length.out=5),
+                              labels=format(as.Date(seq(from=as.POSIXct(min(df$xmin), tz="UTC"),
+                                         to=as.POSIXct(max(df$xmax), tz="UTC"),
+                                         length.out=5)), "%b-%d")) +
+#                                         to=min(df$xmin) + daysdelta*86400 - 60*60*12,
+#                                         length.out=daysdelta),
+#                              labels=rep(days, round(daysdelta/7))) +
+           scale_fill_manual(values=c("orange", "darkgreen", "red"))
+  if (title) {
+    if (!is.null(sp.level)) {
+      cost.premium  <- TotalCostPremium(df)
+      p <- p + ggtitle(paste0("c=", round(sp.level, 1), " ", "C(c)=", round(cost.premium, 0)))
+    }
+  }
+  if (!is.null(ylim)) {
+    p <- p+ylim(ylim)
+  }
+  return(p)
+}
+```
+
+```{r}
+data.tmp <- data.all %>% 
+  subset(USAGE_HOUR >= as.POSIXct("2023-12-03", tz="UTC")) %>%
+  subset(USAGE_HOUR < as.POSIXct("2023-12-31", tz="UTC"))
+# Re-normalize just these 4 weeks to 100
+data.tmp$NORM_USAGE <- data.tmp$NORM_USAGE * (100/max(data.tmp$NORM_USAGE))
+data.w1 <- subset(data.tmp, USAGE_HOUR < as.POSIXct("2023-12-10", tz="UTC"))
+data.w2 <- subset(subset(data.tmp, USAGE_HOUR < as.POSIXct("2023-12-17", tz="UTC")),
+                  USAGE_HOUR >= as.POSIXct("2023-12-10", tz="UTC"))
+data.w3 <- subset(subset(data.tmp, USAGE_HOUR < as.POSIXct("2023-12-24", tz="UTC")),
+                  USAGE_HOUR >= as.POSIXct("2023-12-17", tz="UTC"))
+data.w4 <- subset(subset(data.tmp, USAGE_HOUR < as.POSIXct("2024-01-01", tz="UTC")),
+                  USAGE_HOUR >= as.POSIXct("2023-12-24", tz="UTC"))
+minlev.1 <- findMinSPLevel(data.w1, steps=100)
+minlev.2 <- findMinSPLevel(data.w2, steps=100)
+minlev.3 <- findMinSPLevel(data.w3, steps=100)
+minlev.4 <- findMinSPLevel(data.w4, steps=100)
+minlev <- findMinSPLevel(data.tmp, steps=100)
+data.1 <- AnnotateSPRILevel(data.tmp, sp.level=minlev.4)
+data.1$SPRI_LEVEL[data.1$USAGE_HOUR < as.POSIXct("2023-12-24", tz="UTC")] <- minlev.3
+data.1$SPRI_LEVEL[data.1$USAGE_HOUR < as.POSIXct("2023-12-17", tz="UTC")] <- minlev.2
+data.1$SPRI_LEVEL[data.1$USAGE_HOUR < as.POSIXct("2023-12-10", tz="UTC")] <- minlev.1
+data.b <- GenerateBoxes(data.1)
+show(PlotBoxes.2(data.b))
+print(minlev.1)
+```
+
+```{r}
+data.one <- AnnotateSPRILevel(data.tmp, sp.level=minlev)
+data.oneb <- GenerateBoxes(data.one)
+print(TotalCostPremium(data.oneb))
+show(PlotBoxes.2(data.oneb))
+
+```
+
+```{r}
+print(TotalCostPremium(data.b))
+minlev.1
+```
+
+
+```{r}
+TotalCostPremium(data.b) / TotalCostPremium(data.oneb)
+```
+
+
+```{r plot3by3}
+Plot3x3 <- function(df, start.date="2024-01-07", end.date="2024-01-21", weekdays=FALSE) {
+  days <- c("S", "M", "T", "W", "R", "F", "S")
+  p <- ggplot(df) +
+    geom_rect_pattern(aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax,
+                          fill=Pricing, pattern=Pricing),
+                      colour=NA, pattern_size=0.25, pattern_spacing=0.02) +
+    theme_bw() +
+    theme(axis.text=element_text(size=15), axis.title=element_text(size=15),
+     #     axis.text.x = element_text(angle=90),
+          legend.text = element_text(size=15), legend.title = element_blank(),
+          legend.position="bottom", strip.text=element_text(size=15)) +
+    ylab("Cost") + xlab("") +
+    scale_pattern_manual(values=c("none", "none", "stripe"))
+  if (weekdays) {
+    p <- p + scale_x_continuous(breaks=seq(from=as.POSIXct(start.date, tz="UTC"),
+                                  to=as.POSIXct(end.date, tz="UTC"),
+                                  length.out=14),
+                      labels=rep(days,2))
+  } else {
+     p <- p + scale_x_continuous(breaks=c(as.POSIXct("2023-12-03", tz="UTC"),
+                                          as.POSIXct("2023-12-10", tz="UTC"),
+                                          as.POSIXct("2023-12-17", tz="UTC"),
+                                          as.POSIXct("2023-12-24", tz="UTC")),
+                                 labels=date_format("%b-%d"))
+#                                          seq(from=as.POSIXct(min(df$xmin), tz="UTC"),
+#                                         to=as.POSIXct(max(df$xmax), tz="UTC"),
+#                                         length.out=5),
+#                              labels=format(as.Date(seq(from=as.POSIXct(min(df$xmin), tz="UTC"),
+#                                         to=as.POSIXct(max(df$xmax), tz="UTC"),
+                                         #length.out=5)), "%b-%d")) 
+    #p <- p + scale_x_datetime(breaks = "1 week", minor_breaks = "1 day", labels=date_format("%b-%d"))
+    #, limits=c(min(df$xmin), max(df$xmax)))
+  }
+  p <- p +
+    scale_fill_manual(values=c("orange", "darkgreen", "red")) +
+    facet_wrap(~panel.title)
+  return(p)
+}
+```
+
+## Figure 9
+
+```{r}
+data.oneb$panel.title <- paste0("(a) c=", round(minlev, 1), " C(c)=", round(TotalCostPremium(data.oneb), 0))
+data.b$panel.title <- paste0("(b) c=(", round(minlev.1, 0), ", ", round(minlev.2, 0), ", ", round(minlev.3, 0), ", ", round(minlev.4, 0), ") C(c)=", round(TotalCostPremium(data.b), 0))
+
+fig9 <- rbind(data.b, data.oneb)
+Plot3x3(fig9, start.date="2023-12-17", end.date="2023-12-31")
+```
+
+```{r echo=FALSE,eval=FALSE}
+pdf("ladderedholidayex.pdf", width=9, height=3.5)
+Plot3x3(fig9, start.date="2023-12-17", end.date="2023-12-31")
+dev.off()
+```
+
+
+```{r echo=FALSE,eval=FALSE}
+png("ladderedholidayex.png", width=900, height=350)
+Plot3x3(fig9, start.date="2023-12-17", end.date="2023-12-31")
+dev.off()
+```
+
