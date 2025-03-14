@@ -1,0 +1,468 @@
+---
+# Copyright 2025 Snowflake Inc. 
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+title: "Figures: Trend Analysis"
+author: "Murray Stokely"
+email: "murray.stokely@snowflake.com"
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+  html_document:
+    toc: true
+    number_sections: true
+date: "2025-01-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r echo=FALSE, results=FALSE, warning=FALSE, message=FALSE}
+defaultW <- getOption("warn") # suppress all informational messages during pkg load
+options(warn=-1)
+library(zoo)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(arrow)
+library(cowplot)
+library(scales)
+library(ggpattern) # for thatched area plots to not rely on color printing
+options(warn=defaultW)
+```
+
+# Introduction
+
+This file includes figures and analysis for Section 3.3.1 Trend in Setting Optimal
+Commitment Level for Periodic Demand.
+
+We start by aggregating the different regions and SKUs together to a single timeseries of total VM demand, and normalize this to a 100 unit peak over that time window.
+
+```{r}
+data <- read_parquet("../hourly_normalized.parquet")
+dim(data)
+head(data)
+range(data$USAGE_HOUR)
+data.all <- data %>% group_by(USAGE_HOUR) %>% summarise(across(NORM_USAGE, sum))
+data.all$NORM_USAGE = 100*data.all$NORM_USAGE / max(data.all$NORM_USAGE)
+head(data.all)
+ggplot(data.all, aes(x=USAGE_HOUR, y=NORM_USAGE)) + geom_line()
+```
+
+
+
+# Weekly Pattern Analysis
+
+We trim the start and end of our timeseries to align our dataset with Sunday through Saturday weeks so we can split it up in 7 day chunks and look at the distribution of weekly patterns.
+
+We then generate timeseries of the maximum, minimum, and mean of each day.
+
+```{r}
+all <- data.all %>% subset(USAGE_HOUR >= as.POSIXct("2021-02-07", tz="UTC")) %>%
+  subset(USAGE_HOUR < as.POSIXct("2024-01-28", tz="UTC"))
+range(all$USAGE_HOUR)
+all.ts <- zoo(all$NORM_USAGE, all$USAGE_HOUR)
+# Compute the maximumes over each day.
+all.maxdaily <- rollapply(all.ts, width=24, by=24, FUN=max)
+all.meandaily <- rollapply(all.ts, width=24, by=24, FUN=mean)
+all.mindaily <- rollapply(all.ts, width=24, by=24, FUN=min)
+plot(all.ts)
+plot(all.maxdaily)
+all.meandaily <- 100*all.meandaily/(max(all.meandaily))
+plot(all.meandaily)
+all.meanweekly <- rollapply(all.meandaily, width=7, by=7, FUN=mean)
+plot(all.meanweekly)
+```
+
+
+```{r}
+growthmultiple.3yr <- max(range(all.meanweekly)) / min(range(all.meanweekly))
+growthrate.3yr <- growthmultiple.3yr ^ (1/3)
+print(growthmultiple.3yr)
+print(growthrate.3yr)
+```
+
+## Figure 5
+
+Week over week growth timeseries.
+
+```{r}
+library(scales)
+growth.rate <- diff(all.meanweekly) / head(all.meanweekly, -1)
+growth.rate.df <- data.frame(time=time(growth.rate), value=as.numeric(growth.rate))
+ggplot(growth.rate.df, aes(x=time, y=value)) + geom_bar(stat="identity", color="#5471AB") + theme_bw() + theme(axis.title.x=element_text(size=16), axis.title.y=element_text(size=16), axis.text=element_text(size=14)) + ylab("Week Over Week Growth") + xlab("") + scale_y_continuous(labels=scales::label_percent())
+```
+
+```{r echo=FALSE, eval=FALSE}
+pdf("wowgrowth.pdf", width=7, height=3.25)
+ggplot(growth.rate.df, aes(x=time, y=value)) + geom_bar(stat="identity", color="#5471AB") + theme_bw() + theme(axis.title.x=element_text(size=16), axis.title.y=element_text(size=16), axis.text=element_text(size=14)) + ylab("Week Over Week Growth") + xlab("") + scale_y_continuous(labels=scales::label_percent())
+dev.off()
+```
+
+
+```{r echo=FALSE, eval=FALSE}
+png("wowgrowth.png", width=700, height=325)
+ggplot(growth.rate.df, aes(x=time, y=value)) + geom_bar(stat="identity", color="#5471AB") + theme_bw() + theme(axis.title.x=element_text(size=16), axis.title.y=element_text(size=16), axis.text=element_text(size=14)) + ylab("Week Over Week Growth") + xlab("") + scale_y_continuous(labels=scales::label_percent())
+dev.off()
+```
+
+How many weeks is the trend negative?
+
+```{r}
+length(which(diff(all.meanweekly) < 0 )) / length(diff(all.meanweekly))
+```
+
+# Sensitivity Analysis of Trend and Period for Commitment Savings
+
+First lets pick a week of data to start with:
+
+```{r}
+data.subset <- data.all %>%
+  subset(USAGE_HOUR >= as.POSIXct("2024-01-21", tz="UTC")) %>%
+  subset(USAGE_HOUR < as.POSIXct("2024-01-28", tz="UTC"))
+range(data.subset$USAGE_HOUR)
+dim(data.subset)
+```
+
+Needed helper functions from optimization.Rmd
+
+```{r echo=FALSE}
+AnnotateSPRILevel <- function(df, sp.level) {
+  df$SPRI_LEVEL = sp.level
+  return(df)
+}
+
+GenerateBoxes <- function(df, on.demand.premium=2.1) {
+  # GenerateBoxes - Create data.frame with pricing
+  # Args:
+  #   df: A data.frame with columns
+  #     USAGE_HOUR: POSIXct hourly time
+  #     NORM_USAGE: The VM demand at that hour
+  # 3 boxes each time range - ununused, used with sp/ri coverage,
+  #   used above sp/ri coverage level.
+  data.boxes <- data.frame(
+    xmin = rep(head(df$USAGE_HOUR, -1), 3),
+    xmax = rep(tail(df$USAGE_HOUR, -1), 3),
+    Pricing = c(rep("SP Commitment", length(head(df$USAGE_HOUR, -1))),
+                rep("Unused Commitment", length(head(df$USAGE_HOUR, -1))),
+                rep("On Demand", length(head(df$USAGE_HOUR, -1)))),
+    ymin = c(rep(0, length(head(df$USAGE_HOUR, -1))),
+             head(ifelse(df$NORM_USAGE < df$SPRI_LEVEL, df$NORM_USAGE,
+                         df$SPRI_LEVEL), -1),
+             head(df$SPRI_LEVEL, -1)),
+    ymax = c(head(ifelse(df$NORM_USAGE < df$SPRI_LEVEL, df$NORM_USAGE,
+                         df$SPRI_LEVEL), -1),
+             head(df$SPRI_LEVEL,-1),
+             head(ifelse(df$NORM_USAGE > df$SPRI_LEVEL,
+                         df$SPRI_LEVEL +
+                           (df$NORM_USAGE - df$SPRI_LEVEL)*on.demand.premium,
+                         df$SPRI_LEVEL), -1)))
+  
+  return(data.boxes)
+}
+
+findMinSPLevel <- function(df, steps=9) {
+  min.demand <- min(df$NORM_USAGE)
+  max.demand <- max(df$NORM_USAGE)
+
+  lowest.cost <- NULL
+  lowest.sp <- NULL
+  i<-1
+  for (sp.level in seq(min.demand, max.demand, length=steps)) {
+    df.ann <- AnnotateSPRILevel(df, sp.level)
+    df.boxes <- GenerateBoxes(df.ann)
+    df.boxes$sp.level.label <- sp.level
+    cost.premium  <- TotalCostPremium(df.boxes)
+    if (is.null(lowest.cost)) {
+      lowest.cost <- cost.premium
+      lowest.sp <- sp.level
+    } else if (cost.premium < lowest.cost) {
+      lowest.cost <- cost.premium
+      lowest.sp <- sp.level
+    }
+  }
+  return(lowest.sp)
+}
+
+findMinSPLevel.2 <- function(df, steps=NULL) {
+  min.level <- min(df$NORM_USAGE)
+  max.level <- max(df$NORM_USAGE)
+  helper <- function(sp.level) {
+    df.ann <- AnnotateSPRILevel(df, sp.level)
+    df.boxes <- GenerateBoxes(df.ann)
+    df.boxes$sp.level.label <- sp.level
+    return(TotalCostPremium(df.boxes))
+  }
+  m <- optimize(helper, interval=c(min.level, max.level), tol=1e-20)
+  return(m$minimum)
+}
+
+
+findMinSPLevel.3 <- function(df, steps=NULL, initial=NULL) {
+  min.level <- min(df$NORM_USAGE)
+  max.level <- max(df$NORM_USAGE)
+  helper <- function(sp.level) {
+    df.ann <- AnnotateSPRILevel(df, sp.level)
+    df.boxes <- GenerateBoxes(df.ann)
+    df.boxes$sp.level.label <- sp.level
+    return(TotalCostPremium(df.boxes))
+  }
+  if (is.null(initial)) {
+    initial = (min.level + max.level)/2
+  }
+  m <- optim(par=initial,
+             fn=helper,
+             lower=min.level,
+             upper=max.level,
+             control=list(maxit=5000))
+  return(m$par)
+}
+
+TotalCostPremium <- function(df) {
+  # TotalCost - Computes the Total Cost Premium
+  #
+  # Args:
+  #   df - A data.frame with 3 areas - unused, covered, on-demand.
+  # Returns
+  #   Cost premium
+
+  l1 <- subset(df, Pricing == "SP Commitment")
+  l2 <- subset(df, Pricing == "Unused Commitment")
+  l3 <- subset(df, Pricing == "On Demand")
+  plan.cost <- sum(l1$ymax - l1$ymin)
+  unused.cost <- sum(l2$ymax - l2$ymin)
+  ondemand.cost <- sum(l3$ymax - l3$ymin)
+  total.cost <- plan.cost + unused.cost + ondemand.cost
+  return(total.cost)
+}
+
+FindCost <- function(df, sp.level) {
+  df.ann <- AnnotateSPRILevel(df, sp.level)
+  df.boxes <- GenerateBoxes(df.ann)
+  df.boxes$sp.level.label <- sp.level
+  return(TotalCostPremium(df.boxes))
+}
+```
+
+```{r}
+data.subset.orig <- data.subset
+```
+
+## Table 3
+
+We now do a sensitivity analysis on the costs for different annual trend and number of weeks.
+
+```{r}
+data.subset <- data.subset.orig
+#data.subset$NORM_USAGE <- data.subset$NORM_USAGE * 10
+
+ExtendWeek <- function(df, weeks=1, trend=0.05) {
+  daily.trend <- (1+trend)^(1/365)
+  df.tmp <- df
+  for (w in seq(weeks)) {
+    df.new <- df
+    df.new$USAGE_HOUR <- df.new$USAGE_HOUR + (w*7*86400)
+    df.new$NORM_USAGE <- df.new$NORM_USAGE * daily.trend^(rep(seq(((w-1)*7)+1,((w-1)*7)+7),each=24))
+    #df.new$DEMAND <- df.new$DEMAND * daily.trend^(rep(seq(((w-1)*7)+1,((w-1)*7)+7),each=24))
+    df.tmp <- rbind(df.tmp, df.new) %>% arrange(USAGE_HOUR)
+  }
+  return(df.tmp)
+}
+
+# 100 steps was not enough to generate full table accurately.
+steps <- 30000
+
+for (annual.trend in c(.1, .25, .5, .75, 1)) {
+  # Extend our dataset n weeks into future at specified annual trend
+  df.week.1 <- ExtendWeek(data.subset, weeks=1, trend=annual.trend)
+  df.week.2 <- ExtendWeek(data.subset, weeks=2, trend=annual.trend)
+  df.week.4 <- ExtendWeek(data.subset, weeks=4, trend=annual.trend)
+  df.week.8 <- ExtendWeek(data.subset, weeks=8, trend=annual.trend)
+
+  # Filter out the actuals and only consider the future.
+  df.forecast.1 <- df.week.1 %>% subset(USAGE_HOUR > max(data.subset$USAGE_HOUR))
+  df.forecast.2 <- df.week.2 %>% subset(USAGE_HOUR > max(data.subset$USAGE_HOUR))
+  df.forecast.4 <- df.week.4 %>% subset(USAGE_HOUR > max(data.subset$USAGE_HOUR))
+  df.forecast.8 <- df.week.8 %>% subset(USAGE_HOUR > max(data.subset$USAGE_HOUR))
+
+  # Find lowest cost SP on the actuals
+  lowest.actuals <- findMinSPLevel.2(data.subset, steps)
+  
+  # Compute lowest cost on the forecast
+  lowest.forecast.1 <- findMinSPLevel.2(df.forecast.1, steps)
+  lowest.forecast.2 <- findMinSPLevel.2(df.forecast.2, steps)
+  lowest.forecast.4 <- findMinSPLevel.2(df.forecast.4, steps)
+  lowest.forecast.8 <- findMinSPLevel.2(df.forecast.8, steps)
+  
+  # Compute cost of the week1 forecast with our min SP level found from actuals
+  cost.base.1 <- FindCost(df.forecast.1, lowest.actuals)
+  cost.base.2 <- FindCost(df.forecast.2, lowest.actuals)
+  cost.base.4 <- FindCost(df.forecast.4, lowest.actuals)
+  cost.base.8 <- FindCost(df.forecast.8, lowest.actuals)
+  cost.forecast.1 <- FindCost(df.forecast.1, lowest.forecast.1)
+  cost.forecast.2 <- FindCost(df.forecast.2, lowest.forecast.2)
+  cost.forecast.4 <- FindCost(df.forecast.4, lowest.forecast.4)
+  cost.forecast.8 <- FindCost(df.forecast.8, lowest.forecast.8)
+  
+  print(paste0(" Annual Trend: ", annual.trend,
+               sprintf(" CostBase:1 %0.7f", cost.base.1), sprintf(" Cost1Wk: %0.7f", cost.forecast.1),
+               sprintf(" CostBase:2 %0.7f", cost.base.2), sprintf(" Cost2Wk: %0.7f", cost.forecast.2),
+               sprintf(" CostBase:4 %0.7f", cost.base.4), sprintf(" Cost4Wk: %0.7f", cost.forecast.4),
+               sprintf(" CostBase:8 %0.7f", cost.base.8), sprintf(" Cost8Wk: %0.7f", cost.forecast.8)))
+  print(paste0(sprintf(" CostDelta.1: %0.7f", cost.base.1 - cost.forecast.1),
+               sprintf(" CostDelta.2: %0.7f", cost.base.2 - cost.forecast.2),
+               sprintf(" CostDelta.4: %0.7f", cost.base.4 - cost.forecast.4),
+               sprintf(" CostDelta.8: %0.7f", cost.base.8 - cost.forecast.8)))
+               
+  print("")
+}
+
+for (weeks in c(1, 2, 4,8)) { #} c(1,2,4,8)) {
+  for (annual.trend in c(.1, .25, .5, .75, 1)) {
+    # Extend our dataset n weeks into future at specified annual trend
+    df.tmp <- ExtendWeek(data.subset, weeks=weeks, trend=annual.trend)
+    # Find lowest cost on the actuals
+    lowest.actuals <- findMinSPLevel.2(data.subset, steps)
+    # Filter out the actuals and only consider the future.
+    df.forecast <- df.tmp %>% subset(USAGE_HOUR > max(data.subset$USAGE_HOUR))
+    # Compute lowest cost on the forecast
+    lowest.forecast <- findMinSPLevel.2(df.forecast, steps)
+    # Compute cost of the forecast with our min SP level found from actuals
+    cost.base <- FindCost(df.forecast, lowest.actuals)
+    # Compute cost of the forecast with our min SP level found from forecast
+    cost.forecast <- FindCost(df.forecast, lowest.forecast)
+    #
+    extra.cost <- ((1000000*cost.base) / cost.forecast) - 1000000
+    #extra.cost <- ((cost.1 / cost.forecast) * 1000000) - 1000000
+    print(paste0(" Weeks: ", weeks, sprintf(" MaxVal: %0.1f", max(df.tmp$NORM_USAGE)), sprintf(" Trend: %0.2f", annual.trend),
+                 sprintf(" LowActuals: %0.3f", lowest.actuals),
+                 sprintf(" LowForecast: %0.7f", lowest.forecast),
+                 sprintf(" BaseCost: %0.3f", cost.base),
+                 sprintf(" Cost2: %0.3f", cost.forecast),
+                 sprintf(" Extra Cost: %0.4f", extra.cost),
+                 sprintf(" CostDelta: %0.7f", (cost.base - cost.forecast)),
+                 #sprintf(" CostDeltaPct: %0.4f", 100*(cost.base - cost.forecast)/cost.base),
+                 sprintf(" CostPM: %0.4f", (1000000/cost.base) * (cost.base-cost.forecast))))
+  }
+  print("")
+}
+
+df.tmp <- ExtendWeek(data.subset, weeks=1, trend=0.05)
+lowest.1 <- findMinSPLevel(data.subset, 100)
+df.forecast <- df.tmp %>% subset(USAGE_HOUR > max(data.subset$USAGE_HOUR))
+lowest.forecast <- findMinSPLevel(df.forecast, 100)
+cost.1 <- FindCost(df.forecast, lowest.1)
+cost.forecast <- FindCost(df.forecast, lowest.forecast)
+cost.1
+cost.forecast
+```
+
+
+### Pull in PlotBoxes from optimization.Rmd
+
+```{r}
+
+PlotBoxes <- function(df, sp.level=NULL, title=FALSE, ylim=NULL) {
+  days <- c("S", "M", "T", "W", "R", "F", "S")
+  p <- ggplot(df) +
+           geom_rect_pattern(aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax,
+                                 fill=Pricing, pattern=Pricing),
+                             colour=NA, pattern_size=0.25,
+                             pattern_spacing=0.02) +
+           theme_bw() +
+           theme(axis.text=element_text(size=15),
+                 axis.title=element_text(size=15),
+                 legend.text = element_text(size=15),
+                 legend.title = element_blank(),
+                 legend.position="bottom",
+                 strip.text=element_text(size=15)) +
+           ylab("Cost") + xlab("") +
+           scale_pattern_manual(values=c("none", "none", "stripe")) +
+           scale_x_continuous(breaks=seq(from=as.POSIXct("2024-06-02 12:00:00"),
+                                         to=as.POSIXct("2024-06-15 12:00:00"),
+                                         length.out=14),
+                              labels=rep(days,2)) +
+           scale_fill_manual(values=c("orange", "darkgreen", "red"))
+  if (title) {
+    if (!is.null(sp.level)) {
+      cost.premium  <- TotalCostPremium(df)
+      p <- p + ggtitle(paste0("c=", round(sp.level, 1), " ", "C(c)=", round(cost.premium, 0)))
+    }
+  }
+  if (!is.null(ylim)) {
+    p <- p+ylim(ylim)
+  }
+  return(p)
+}
+```
+
+## Figure 6
+
+We create a new data frame from our existing week extended out 8 weeks with 100% annual trend and compare the
+SP level that would be set on the initial data vs the 8-week forecast.
+
+```{r}
+df.tmp<-ExtendWeek(data.subset, weeks=8, trend=1)
+lowest.1 <- findMinSPLevel(data.subset, 100)
+df.forecast <- df.tmp %>% subset(USAGE_HOUR > max(data.subset$USAGE_HOUR))
+lowest.forecast <- findMinSPLevel(df.forecast, 100)
+cost.1 <- FindCost(df.forecast, lowest.1)
+cost.forecast <- FindCost(df.forecast, lowest.forecast)
+cost.1
+cost.forecast
+
+PlotBest.2 <- function(df, sp.level, annotated.level) {
+  df.ann <- AnnotateSPRILevel(df, sp.level)
+  df.boxes <- GenerateBoxes(df.ann)
+  brks <- seq(from=min(df.boxes$xmin), to=max(df.boxes$xmax), by=(60*60*24*7))
+  p <- PlotBoxes(df.boxes)
+  p <- p +
+    scale_x_continuous(breaks=brks, labels=1:length(brks)) +
+    geom_hline(aes(yintercept=sp.level,
+                   linetype="Min Cost Commitment for 1-week"),
+               color="black") +
+    geom_hline(aes(yintercept=annotated.level,
+                   linetype="Min Cost Commitment for 8-weeks"),
+               color="red") +
+    scale_linetype_manual(name="Commitment Level",
+                          values=c("dashed", "dashed"),
+                          guide=guide_legend(
+                            position="top",
+                            direction="vertical",
+                            override.aes = list(color=c("black", "red")))) +
+    xlab("Week")
+  return(p)
+}
+
+p <- PlotBest.2(df.forecast, lowest.1, lowest.forecast)
+p
+```
+
+```{r echo=FALSE,eval=FALSE}
+pdf("trendforecast.pdf", width=7, height=4)
+p
+dev.off()
+```
+
+```{r echo=FALSE,eval=FALSE}
+png("trendforecast.png", width=700, height=400)
+p
+dev.off()
+```
+
+
+
