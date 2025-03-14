@@ -10,15 +10,15 @@ This project is archived on [Zenodo](https://zenodo.org/), an open-access reposi
 
 ## Index of Figures
 
-| Figure | Description                                  | Image Filename    | Source File                          | Image                                    |
-|--------|----------------------------------------------|-------------------|--------------------------------------|------------------------------------------|
-| 2      | VM Demand Timeseries                         | dailypattern.pdf  | [timeseries.Rmd](timeseries.Rmd)     | <img src="dailypattern.png" width=200/>  |
-| 4      | 3x3 Grid Showing Numeric Optimization Method | 3x3.pdf           | [optimization.Rmd](optimization.Rmd) | <img src="3x3.png" width=300/>           |
-| 5      | Week over week growth timeseries             | wowgrowth.pdf     | [trend.Rmd](trend.Rmd)               | <img src="wowgrowth.png" width=300/>     |
-| 6      | 8-week extrapolation timeseries              | trendforecast.pdf | [trend.Rmd](trend.Rmd)               | <img src="trendforecast.png" width=300/> |
-| 7      | Hourly holiday VM demand timeseries          | annualholiday.pdf | [timeseries.Rmd](timeseries.Rmd)     | <img src="annualholiday.png" width=300/> |
-| 8      | 1 vs 2 week forecast horizon comparison | forecastw12.pdf | [optimization.Rmd](optimization.Rmd) | <img src="forecastw12.png" width=300/> |
-| 9      | 4 week laddered expiration example | ladderedholidayex.pdf | [trend.Rmd](trend.Rmd)               | <img src="ladderedholidayex.png" width=300/> |
+| Figure | Description                                  | Image Filename    | Source File                          | Image                                        |
+|--------|----------------------------------------------|-------------------|--------------------------------------|----------------------------------------------|
+| 2      | VM Demand Timeseries                         | dailypattern.pdf  | [timeseries.Rmd](timeseries.Rmd)     | <img src="dailypattern.png" width=200/>      |
+| 4      | 3x3 Grid Showing Numeric Optimization Method | 3x3.pdf           | [optimization.Rmd](optimization.Rmd) | <img src="3x3.png" width=200/>               |
+| 5      | Week over week growth timeseries             | wowgrowth.pdf     | [trend.Rmd](trend.Rmd)               | <img src="wowgrowth.png" width=200/>         |
+| 6      | 8-week extrapolation timeseries              | trendforecast.pdf | [trend.Rmd](trend.Rmd)               | <img src="trendforecast.png" width=200/>     |
+| 7      | Hourly holiday VM demand timeseries          | annualholiday.pdf | [timeseries.Rmd](timeseries.Rmd)     | <img src="annualholiday.png" width=200/>     |
+| 8      | 1 vs 2 week forecast horizon comparison | forecastw12.pdf | [optimization.Rmd](optimization.Rmd) | <img src="forecastw12.png" width=200/>       |
+| 9      | 4 week laddered expiration example | ladderedholidayex.pdf | [trend.Rmd](trend.Rmd)               | <img src="ladderedholidayex.png" width=200/> |
 
 ## Contact
 
