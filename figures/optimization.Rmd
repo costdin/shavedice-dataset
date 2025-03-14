@@ -40,6 +40,7 @@ library(tidyr)
 library(dplyr)
 library(arrow)
 library(cowplot)
+library(scales)
 library(ggpattern) # for thatched area plots to not rely on color printing
 options(warn=defaultW)
 ```
@@ -49,20 +50,30 @@ options(warn=defaultW)
 This file includes figures and analysis for Section 3.2 on Setting Optimal
 Commitment Level for Periodic Demand.
 
-We start by restricting to a 2-week subset of the data from January 2024, aggregate the different regions and SKUs together to a single timeseries of total VM demand, and normalize this to a 100 unit peak over that time window.
+We start by reading in the dataset.
 
 ```{r}
 data <- read_parquet("../hourly_normalized.parquet")
-data <- data %>% 
+```
+
+We then aggregating the different regions and SKUs together to a single timeseries of total VM demand and then normalize this demand to a 100 unit peak over the period.
+
+```{r}
+data.all <- data %>% group_by(USAGE_HOUR) %>% summarise(across(NORM_USAGE, sum))
+data.all$NORM_USAGE = 100 * data.all$NORM_USAGE / max(data.all$NORM_USAGE)
+```
+
+We then create a 2-week subset of the data from January 2024, and check that we have the data we expect.
+
+```{r}
+data.sub <- data.all %>% 
   subset(USAGE_HOUR >= as.POSIXct("2024-01-07", tz="UTC")) %>%
   subset(USAGE_HOUR < as.POSIXct("2024-01-21", tz="UTC"))
-dim(data)
-head(data)
-range(data$USAGE_HOUR)
-data.all <- data %>% group_by(USAGE_HOUR) %>% summarise(across(NORM_USAGE, sum))
-data.all$NORM_USAGE = 100*data.all$NORM_USAGE / max(data.all$NORM_USAGE)
-head(data.all)
-ggplot(data.all, aes(x=USAGE_HOUR, y=NORM_USAGE)) + geom_line()
+data.sub$NORM_USAGE = 100 * data.sub$NORM_USAGE / max(data.sub$NORM_USAGE)
+dim(data.sub)
+head(data.sub)
+range(data.sub$USAGE_HOUR)
+ggplot(data.sub, aes(x=USAGE_HOUR, y=NORM_USAGE)) + geom_line()
 ```
 
 # Visualization
@@ -73,7 +84,7 @@ we introduce a simple 3-color area visualization with time on the x-axis and nor
 
 Note that since the y-axis is cost, instead of VM instance hours, the more of the demand that is covered at expensive on-demand rates means the higher the y-axis will be.
 
-```{r}
+```{r generateboxes}
 GenerateBoxes <- function(df, on.demand.premium=2.1) {
   # GenerateBoxes - Create data.frame with pricing
   # Args:
@@ -104,15 +115,15 @@ GenerateBoxes <- function(df, on.demand.premium=2.1) {
 }
 ```
 
-```{r}
+```{r plotboxes}
 AnnotateSPRILevel <- function(df, sp.level) {
   df$SPRI_LEVEL = sp.level
   return(df)
 }
 
-PlotBoxes <- function(df) {
+PlotBoxes <- function(df, sp.level=NULL, title=FALSE, ylim=NULL) {
   days <- c("S", "M", "T", "W", "R", "F", "S")
-  return(ggplot(df) +
+  p <- ggplot(df) +
            geom_rect_pattern(aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax,
                                  fill=Pricing, pattern=Pricing),
                              colour=NA, pattern_size=0.25,
@@ -130,7 +141,17 @@ PlotBoxes <- function(df) {
                                          to=as.POSIXct("2024-06-15 12:00:00"),
                                          length.out=14),
                               labels=rep(days,2)) +
-           scale_fill_manual(values=c("orange", "darkgreen", "red")))
+           scale_fill_manual(values=c("orange", "darkgreen", "red"))
+  if (title) {
+    if (!is.null(sp.level)) {
+      cost.premium  <- TotalCostPremium(df)
+      p <- p + ggtitle(paste0("c=", round(sp.level, 1), " ", "C(c)=", round(cost.premium, 0)))
+    }
+  }
+  if (!is.null(ylim)) {
+    p <- p+ylim(ylim)
+  }
+  return(p)
 }
 ```
   
@@ -138,10 +159,10 @@ PlotBoxes <- function(df) {
 ```{r}
 # Set the Savings Plan commitment level to halfway between the max and min
 # demand over the time period.
-data.all <- AnnotateSPRILevel(data.all,
-                              (max(data.all$NORM_USAGE) +
-                                 min(data.all$NORM_USAGE))/2)
-df <- GenerateBoxes(data.all)
+data.sub <- AnnotateSPRILevel(data.sub,
+                              (max(data.sub$NORM_USAGE) +
+                                 min(data.sub$NORM_USAGE))/2)
+df <- GenerateBoxes(data.sub)
 head(df)
 PlotBoxes(df)
 ```
@@ -237,19 +258,19 @@ FindCost <- function(df, sp.level) {
   return(TotalCostPremium(df.boxes))
 }
 
-fulldf.1 <- findOptimalSPLevel(data.all)
-lowest.1 <- findMinSPLevel(data.all, 100)
-cost.1 <- FindCost(data.all, lowest.1)
+fulldf.1 <- findOptimalSPLevel(data.sub)
+lowest.1 <- findMinSPLevel(data.sub, 100)
+cost.1 <- FindCost(data.sub, lowest.1)
 print(lowest.1)
 print(cost.1)
 ```
 
-And generate output PDF and PNGs:
+We use a 3x3 matrix of visualizations with different savings plan commitment levels to illustrate how the minimum cost is found.
 
 ```{r plot3by3}
-Plot3x3 <- function() {
+Plot3x3 <- function(df, start.date="2024-01-07", end.date="2024-01-21", weekdays=FALSE) {
   days <- c("S", "M", "T", "W", "R", "F", "S")
-  ggplot(fulldf.1) +
+  p <- ggplot(df) +
     geom_rect_pattern(aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax,
                           fill=Pricing, pattern=Pricing),
                       colour=NA, pattern_size=0.25, pattern_spacing=0.02) +
@@ -258,26 +279,100 @@ Plot3x3 <- function() {
           legend.text = element_text(size=15), legend.title = element_blank(),
           legend.position="bottom", strip.text=element_text(size=15)) +
     ylab("Cost") + xlab("") +
-    scale_pattern_manual(values=c("none", "none", "stripe")) +
-    scale_x_continuous(breaks=seq(from=as.POSIXct("2024-06-02 12:00:00"),
-                                  to=as.POSIXct("2024-06-15 12:00:00"),
+    scale_pattern_manual(values=c("none", "none", "stripe"))
+  if (weekdays) {
+    p <- p + scale_x_continuous(breaks=seq(from=as.POSIXct(start.date, tz="UTC"),
+                                  to=as.POSIXct(end.date, tz="UTC"),
                                   length.out=14),
-                      labels=rep(days,2)) +
+                      labels=rep(days,2))
+  } else {
+    #p <- p + scale_x_datetime(breaks = "1 week",
+    #     minor_breaks = "1 day", labels=date_format("%b-%d"))
+        p <- p + scale_x_continuous(breaks=c(
+                                          as.POSIXct("2023-12-17", tz="UTC"),
+                                          as.POSIXct("2023-12-24", tz="UTC")),
+                                 labels=date_format("%b-%d"))
+  }
+  p <- p +
     scale_fill_manual(values=c("orange", "darkgreen", "red")) +
     facet_wrap(~panel.title)
+  return(p)
 }
-Plot3x3()
+```
+
+Then we generate output PDF and PNGs:
+
+## Figure 4
+
+```{r}
+Plot3x3(fulldf.1, weekdays=TRUE)
 ```
 
 ```{r echo=FALSE, eval=FALSE}
 png("3x3.png", width=900, height=750)
-Plot3x3()
+Plot3x3(fulldf.1)
 dev.off()
 ```
 
 ```{r echo=FALSE, eval=FALSE}
 pdf("3x3.pdf", width=9, height=7.5)
-Plot3x3()
+Plot3x3(fulldf.1)
 dev.off()
 ```
 
+# Comparison of Different Commitment Levels
+
+Lets compare what happens if we use 1-week into the future or 2 weeks, for example, in the week preceding a major seasonal effect.
+
+We start by subsetting the data to look only at the last two weeks of 2023 including the holiday slump and then normalize demand to a maximum of 100 units during this time.
+
+```{r}
+data.tmp <- data.all %>% 
+  subset(USAGE_HOUR >= as.POSIXct("2023-12-17", tz="UTC")) %>%
+  subset(USAGE_HOUR < as.POSIXct("2023-12-31", tz="UTC"))
+# Re-normalize just these 4 weeks to 100
+data.tmp$NORM_USAGE <- data.tmp$NORM_USAGE * (100/max(data.tmp$NORM_USAGE))
+```
+
+## Figure 8.
+
+We take a further subset of only the first week from 12/17 to 12/24, and find the minimum SP level for that first week, as well as the minimum SP level for both weeks.
+
+```{r}
+data.tmp.1 <- data.tmp %>% subset(USAGE_HOUR < as.POSIXct("2023-12-24", tz="UTC"))
+o.1 <-findMinSPLevel(data.tmp.1, steps=100)
+o.2 <- findMinSPLevel(data.tmp, steps=100)
+```
+
+
+```{r}
+data.fig8.2 <- AnnotateSPRILevel(data.tmp, o.2)
+
+data.fig8.1 <- AnnotateSPRILevel(data.tmp, o.1)
+df.1 <- GenerateBoxes(data.fig8.1)
+PlotBoxes(df.1, sp.level=o.1, title=TRUE)
+
+df.2 <- GenerateBoxes(data.fig8.2)
+PlotBoxes(df.2, sp.level=o.2, title=TRUE) #, ylim=c(0,4600))
+```
+## Figure 8
+
+```{r}
+df.1$panel.title <- paste0("(a) c=", round(o.1, 1), " C(c)=", round(TotalCostPremium(df.1), 0))
+df.2$panel.title <- paste0("(b) c=", round(o.2, 1), " C(c)=", round(TotalCostPremium(df.2), 0))
+Plot3x3(rbind(df.1, df.2), start.date="2023-12-17", end.date="2023-12-31")
+```
+
+
+```{r echo=FALSE, eval=FALSE}
+pdf("forecastw12.pdf", width=9, height=3.5)
+Plot3x3(rbind(df.21, df.2), start.date="2023-12-17", end.date="2023-12-31")
+dev.off()
+```
+
+
+```{r echo=FALSE, eval=FALSE}
+png("forecastw12.png", width=900, height=350)
+Plot3x3(rbind(df.21, df.2), start.date="2023-12-17", end.date="2023-12-31")
+dev.off()
+```
