@@ -3,3 +3,6 @@ pyarrow
 matplotlib
 seaborn
 jupyter
+numpy
+sklearn
+statsmodels
